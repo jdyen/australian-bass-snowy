@@ -258,13 +258,23 @@ for (i in seq_len(actions$n_required)) {
   # extract correct initials
   init_set <- initials[[actions$site[i]]]
 
+  # replace Ricker model with BH density dependence
+  ab$dynamics <- update(
+    ab$dynamics,
+    density_dependence = density_dependence(
+      masks = reproduction(ab$dynamics$matrix),
+      funs = beverton_holt(k = sim_settings$carrying_capacity, exclude = 1:3)
+    )
+  )
+  
   # simulate population dynamics
   sims <- simulate(
     ab,
     nsim = nsim,
     init = init_set,
     args = list(
-      covariates = format_covariates(sim_settings$covars)
+      covariates = format_covariates(sim_settings$covars),
+      density_dependence = list(theta = 1)
     ),
     options = list(
       update = update_binomial_leslie,
@@ -273,13 +283,13 @@ for (i in seq_len(actions$n_required)) {
   )
   
   # save outputs
-  qsave(sims, file = paste0("outputs/simulations/sims_", i, ".qs"))
+  qsave(sims, file = paste0("outputs/simulations/sims_bh_theta1_", i, ".qs"))
   
 }
 
 # we can load and summarise each
 actions <- qread("outputs/simulations/actions_list.qs")
-sims_list <- paste0("sims_", seq_len(actions$n_required), ".qs")
+sims_list <- paste0("sims_bh_theta1_", seq_len(actions$n_required), ".qs")
 
 # calculate population-level outcomes
 sim_sum <- lapply(
@@ -290,10 +300,10 @@ sim_sum <- lapply(
 )
 
 # save summary output
-qsave(sim_sum, file = "outputs/simulations/sim_sum.qs")
+qsave(sim_sum, file = "outputs/simulations/sim_sum_bh_theta1.qs")
 
 # and load back in
-sim_sum <- qread("outputs/simulations/sim_sum.qs")
+sim_sum <- qread("outputs/simulations/sim_sum_bh_theta1.qs")
 
 # extract emps and risk curves
 emps <- sapply(sim_sum, function(x) x$emps)
@@ -315,8 +325,8 @@ sims_to_plot <- list(
   c(best_action, 1) + 3 * naction,
   c(best_action, 1) + 4 * naction
 )
-ylim_traj <- 50000
-jpeg(file = paste0("outputs/figs/trajectories.jpg"),
+ylim_traj <- 20000
+png(file = paste0("outputs/figs/trajectories_bh_theta1.png"),
      height = 1.25 * 6,
      width = 6,
      res = 600,
@@ -328,8 +338,8 @@ col_pal <- RColorBrewer::brewer.pal(8, "Set1")
 
 # initialise plot
 sim_plot <- list(
-  best = qread(paste0("outputs/simulations/sims_", sims_to_plot[[1]][1], ".qs")),
-  baseline = qread(paste0("outputs/simulations/sims_", sims_to_plot[[1]][2], ".qs"))
+  best = qread(paste0("outputs/simulations/sims_bh_theta1_", sims_to_plot[[1]][1], ".qs")),
+  baseline = qread(paste0("outputs/simulations/sims_bh_theta1_", sims_to_plot[[1]][2], ".qs"))
 )
 xplot <- seq_len(dim(sim_plot[[1]])[3]) + 1969
 plot(subset(sim_plot[[1]], subset = 4:40)[1, 1, ] ~ xplot,
@@ -343,8 +353,8 @@ mtext("Year", side = 1, line = 2.5, cex = 0.9)
 for (j in seq_along(sims_to_plot)) {
   
   sim_plot <- list(
-    best = qread(paste0("outputs/simulations/sims_", sims_to_plot[[j]][1], ".qs")),
-    baseline = qread(paste0("outputs/simulations/sims_", sims_to_plot[[j]][2], ".qs"))
+    best = qread(paste0("outputs/simulations/sims_bh_theta1_", sims_to_plot[[j]][1], ".qs")),
+    baseline = qread(paste0("outputs/simulations/sims_bh_theta1_", sims_to_plot[[j]][2], ".qs"))
   )
   traj_sub <- sample(seq_len(nsim), size = min(c(30, nsim)), replace = FALSE)
   
@@ -402,6 +412,11 @@ legend(x = 0.5, y = 9,
 dev.off()
 
 # prepare plots of risk curves
+climate_label <- c(
+  "Historical", "Post-1997",
+  "RCP4.5 low", "RCP4.5 med.", "RCP4.5 high",
+  "RCP8.5 low", "RCP8.5 med.", "RCP8.5 high"
+)
 action_label <- c(
   "none" = "None",
   "env_flows_low2t" = "Env. water (two small)",
@@ -423,15 +438,16 @@ col_pal <- c(col_pal, col_pal[11])
 lty_set <- c(rep(1, 11), 2)
 
 # initialise plot
-jpeg(
-  file = paste0("outputs/figs/risk_curve.jpg"),
+png(
+  file = paste0("outputs/figs/risk_curve_bh_theta1.png"),
   units = "in",
-  width = 10,
-  height = (10 / 4) * 2.4,
+  width = 9,
+  height = (9 / 4) * 4.4,
   pointsize = 12,
   res = 300
 )
-layout(mat = matrix(c(1, 5, 9, 2, 6, 9, 3, 7, 9, 4, 8, 9), ncol = 4), heights = c(rep(1, 2), 0.2))
+
+layout(mat = matrix(c(1, 9, 2, 10, 17, 3, 11, 4, 12, 17, 5, 13, 6, 14, 17, 7, 15, 8, 16, 17), ncol = 4), heights = c(rep(1, 4), 0.2))
 climates_reordered <- climates[c(1:2, 6:8, 3:5)]
 par(mar = c(4.1, 4.5, 2.1, 1.1))
 for (j in seq_along(climates_reordered)) {
@@ -439,12 +455,16 @@ for (j in seq_along(climates_reordered)) {
   # subset to relevant risk curves
   idx <- actions$climate == climates_reordered[j]
   risk_sub <- risk_curves[idx, ]
-  
-  # and actions
+
+  # subset actions  
   actions_sub <- actions$actions[idx, ]
-  
+
   # filter to individual actions only
-  risk_sub <- risk_sub[actions_sub[, 2] == "none", ]
+  risk_sub_none <- risk_sub[actions_sub[, 2] == "none" & grepl("none", actions_sub[, 1]), , drop = FALSE]
+  risk_sub_ef <- risk_sub[actions_sub[, 2] == "none" & grepl("env_flows", actions_sub[, 1]), ]
+  risk_sub_stock <- risk_sub[actions_sub[, 2] == "none" & grepl("stocking", actions_sub[, 1]), ]
+  
+  # grab set of actions for the legend
   actions_sub <- actions_sub[actions_sub[, 2] == "none", ]
   
   # set axis labels
@@ -456,7 +476,7 @@ for (j in seq_along(climates_reordered)) {
   
   # set up plot
   plot(
-    risk_sub[1, ] ~ threshold, 
+    risk_sub_ef[1, ] ~ threshold, 
     ylim = c(0, 1), 
     las = 1,
     type = "n", 
@@ -466,16 +486,43 @@ for (j in seq_along(climates_reordered)) {
     ylab = ylab_set
   )
   
+  # add no actions curve
+  lines(risk_sub_none[1, ] ~ threshold, col = col_pal[1], lwd = 2, lty = lty_set[1])
+  
   # add each curve
-  for (k in seq_len(nrow(risk_sub))) {
-    lines(risk_sub[k, ] ~ threshold, col = col_pal[k], lwd = 2, lty = lty_set[k])
+  for (k in seq_len(nrow(risk_sub_ef))) {
+    lines(risk_sub_ef[k, ] ~ threshold, col = col_pal[k + 1], lwd = 2, lty = lty_set[k + 1])
   }
   
   # add climate label
-  mtext(climate_label[j], side = 3, cex = 0.9, line = 0.1, adj = 1)
+  mtext(paste0(climate_label[j], " (env. water)"), side = 3, cex = 0.8, line = 0.1, adj = 0)
+  
+  # set up plot
+  plot(
+    risk_sub_stock[1, ] ~ threshold, 
+    ylim = c(0, 1), 
+    las = 1,
+    type = "n", 
+    bty = "l",
+    xlim = c(0, 5000),
+    xlab = xlab_set,
+    ylab = ylab_set
+  )
+  
+  # add no actions curve
+  lines(risk_sub_none[1, ] ~ threshold, col = col_pal[1], lwd = 2, lty = lty_set[1])
+
+  # add each curve
+  for (k in seq_len(nrow(risk_sub_stock))) {
+    lines(risk_sub_stock[k, ] ~ threshold, col = col_pal[8 + k], lwd = 2, lty = lty_set[8 + k])
+  }
+  
+  # add climate label
+  mtext(paste0(climate_label[j], " (stocking)"), side = 3, cex = 0.8, line = 0.1, adj = 0)
   
   # add legend
   if (j == 8) {
+    
     par(mar = rep(0, 4))
     plot(seq(0, 1, length = 10) ~ seq(0, 200, length = 10),
          type = "n",
@@ -551,7 +598,7 @@ write.csv(
       reorder_benefit
     )
   ),
-  file = "outputs/tables/population_outcomes.csv"
+  file = "outputs/tables/population_outcomes_bh_theta1.csv"
 )
 
 # add cost info
@@ -571,10 +618,10 @@ costs <- c(
   "stocking30" = 30000 * cost_per_fingerling,
   "stocking50" = 50000 * cost_per_fingerling
 )
-write.csv(costs, file = "outputs/tables/intervention-costs.csv")
+write.csv(costs, file = "outputs/tables/intervention-costs_bh_theta1.csv")
 
 # barplot of frequency of action inclusion under each climate for each pop
-pop_outcomes <- read.csv("outputs/tables/population_outcomes.csv")
+pop_outcomes <- read.csv("outputs/tables/population_outcomes_bh_theta1.csv")
 all_actions <- c(
   "env_flows_low2t",
   "env_flows_low3t",
@@ -593,7 +640,8 @@ colnames(action_freq) <- c("n", all_actions)
 for (j in seq_along(climates_reordered)) {
   idx <- pop_outcomes$climate == climates_reordered[j]
   x_sub <- pop_outcomes[idx, ]
-  idy <- x_sub$emps >= (0.8 * max(x_sub$emps))
+  idy <- x_sub$emps >= (0.8 * max(x_sub$emps)) & 
+    x_sub$persist >= 0.99
   freq_table <- table(unlist(x_sub[idy, grepl("actions", colnames(x_sub))])) / sum(idy)
   freq_table <- c(sum(idy), freq_table)
   names(freq_table)[1] <- "n"
@@ -602,7 +650,7 @@ for (j in seq_along(climates_reordered)) {
 }
 
 # plot results
-png(file = "outputs/figs/prop-inclusion.png", width = 6, height = 6 * 1.25, units = "in", res = 600, pointsize = 12)
+png(file = "outputs/figs/prop-inclusion_bh_theta1.png", width = 6, height = 6 * 1.25, units = "in", res = 600, pointsize = 12)
 
 # set layout
 laymat <- matrix(c(1, 2), nrow = 2)
